@@ -3,21 +3,31 @@
 
 
   <!-- Sim mode (use_sim): loads the Gazebo plugins from rover.gazebo.xacro.
-       articulated: passive revolute rocker/bogie joints with the differential
-       emulated by a mimic constraint (right rocker = -left rocker), which
-       cancels common-mode chassis pitch exactly like the real tie-rod bar.
-       ONLY the bullet-featherstone physics engine enforces <mimic> at runtime
-       (mars_rough_world.sdf selects it); under DART the rockers flop onto
-       their limits and tilt the chassis/lidar ~20 deg — so in the DART worlds
-       (obstacle/mars) keep articulated:=false, which locks the suspension as
-       in Phases 2-4. sim.launch.py auto-picks this from the world name. -->
+       Suspension modes in sim (auto-picked by sim.launch.py from the world):
+       - articulated: FULL passive suspension — rockers + bogies revolute,
+         differential emulated by a mimic constraint (right rocker = -left
+         rocker, exactly the tie-rod bar constraint). Requires the
+         bullet-featherstone engine (mars_rough_world.sdf): DART ignores
+         <mimic> and the rockers flop 20 deg onto their limits. Bullet in
+         turn cannot do controllable skid-steer rotation (line-contact
+         cylinder wheels grip torsionally; sphere wheels are erratic), so
+         this mode is for teleop/scripted suspension demos, NOT Nav2.
+       - bogies_free: bogies revolute, rockers locked. The bogies are
+         independent joints (no closed loop), so this works under DART with
+         the calibrated skid-steer odometry intact -> live suspension
+         articulation DURING autonomous SLAM/Nav2 (mars_demo_world.sdf).
+       - neither: fully locked (obstacle/mars worlds, Phases 2-4). -->
   <xacro:arg name="use_sim" default="false"/>
   <xacro:arg name="articulated" default="false"/>
+  <xacro:arg name="bogies_free" default="false"/>
   <xacro:property name="use_sim" value="$(arg use_sim)"/>
   <xacro:property name="articulated" value="$(arg articulated)"/>
-  <!-- suspension locked only in sim without articulation (display mode always
-       articulates so the joint_state_publisher GUI can move the linkage) -->
-  <xacro:property name="susp_locked" value="${use_sim and not articulated}"/>
+  <xacro:property name="bogies_free" value="$(arg bogies_free)"/>
+  <!-- display mode (not use_sim) always articulates everything so the
+       joint_state_publisher GUI can move the linkage -->
+  <xacro:property name="rocker_locked" value="${use_sim and not articulated}"/>
+  <xacro:property name="bogie_locked"
+                  value="${use_sim and not (articulated or bogies_free)}"/>
 
   <!-- Passive suspension joint dynamics (no springs in a rocker-bogie; damping
        just settles oscillations) -->
@@ -172,10 +182,22 @@
         <geometry><cylinder radius="0.008" length="0.08"/></geometry>
         <material name="rod_silver"/>
       </visual>
-      <collision>
-        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
-        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
-      </collision>
+      <!-- Articulated (bullet) mode uses SPHERE collision wheels: bullet's
+           cylinder-plane line contact grips torsionally like a parked car
+           tire — with 6 of them the rover cannot skid-rotate in place AT ALL
+           (measured: 0.8 rad/s commanded -> 0.01 rad/s actual, any mu).
+           A point contact pivots freely. DART worlds keep the cylinder. -->
+      <xacro:if value="${articulated}">
+        <collision>
+          <geometry><sphere radius="${wheel_radius}"/></geometry>
+        </collision>
+      </xacro:if>
+      <xacro:unless value="${articulated}">
+        <collision>
+          <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+          <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        </collision>
+      </xacro:unless>
       <xacro:cylinder_inertial m="0.35" r="${wheel_radius}" h="${wheel_width}"/>
     </link>
   </xacro:macro>
@@ -188,11 +210,11 @@
 
     <!-- Rocker (dark plate): pivots on the side plate; carries the front wheel,
          the bogie, and the upward tie-rod extension -->
-    <joint name="${side}_rocker_joint" type="${'fixed' if susp_locked else 'revolute'}">
+    <joint name="${side}_rocker_joint" type="${'fixed' if rocker_locked else 'revolute'}">
       <parent link="base_link"/>
       <child link="${side}_rocker_link"/>
       <origin xyz="${rocker_x} ${reflect*arm_y} ${rocker_z}" rpy="0 0 0"/>
-      <xacro:unless value="${susp_locked}">
+      <xacro:unless value="${rocker_locked}">
         <axis xyz="0 1 0"/>
         <limit lower="-0.35" upper="0.35" effort="20" velocity="3"/>
         <dynamics damping="${rocker_damping}" friction="${susp_friction}"/>
@@ -213,11 +235,11 @@
     </link>
 
     <!-- Bogie (tan plate): pivots on the rocker; carries middle and rear wheels -->
-    <joint name="${side}_bogie_joint" type="${'fixed' if susp_locked else 'revolute'}">
+    <joint name="${side}_bogie_joint" type="${'fixed' if bogie_locked else 'revolute'}">
       <parent link="${side}_rocker_link"/>
       <child link="${side}_bogie_link"/>
       <origin xyz="${bogie_x - rocker_x} 0 ${bogie_z - rocker_z}" rpy="0 0 0"/>
-      <xacro:unless value="${susp_locked}">
+      <xacro:unless value="${bogie_locked}">
         <axis xyz="0 1 0"/>
         <limit lower="-0.35" upper="0.35" effort="20" velocity="3"/>
         <dynamics damping="${bogie_damping}" friction="${susp_friction}"/>

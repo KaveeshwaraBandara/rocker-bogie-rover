@@ -24,7 +24,8 @@ def generate_launch_description():
 
     robot_description = ParameterValue(
         Command(['xacro ', xacro_file, ' use_sim:=true',
-                 ' articulated:=', LaunchConfiguration('articulated')]),
+                 ' articulated:=', LaunchConfiguration('articulated'),
+                 ' bogies_free:=', LaunchConfiguration('bogies_free')]),
         value_type=str)
 
     gz_sim = IncludeLaunchDescription(
@@ -49,18 +50,30 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world', default_value='obstacle_world.sdf',
             description='World file name in rover_gazebo/worlds '
-                        '(obstacle_world.sdf, mars_world.sdf or '
-                        'mars_rough_world.sdf suspension test track)'),
+                        '(obstacle_world.sdf, mars_world.sdf, '
+                        'mars_rough_world.sdf suspension test track, or '
+                        'mars_demo_world.sdf full-capability demo)'),
         DeclareLaunchArgument(
             'articulated',
-            # passive rocker-bogie suspension needs the mimic (differential)
-            # constraint, which only the bullet-featherstone engine enforces —
-            # default on exactly for the world built on that engine
+            # full passive suspension (rockers + mimic differential) needs the
+            # bullet-featherstone engine — default on exactly for the world
+            # built on that engine; bullet can't skid-steer rotate, so this
+            # mode is for teleop demos, not Nav2
             default_value=PythonExpression(
                 ["'true' if 'rough' in '", LaunchConfiguration('world'),
                  "' else 'false'"]),
-            description='Unlock passive rocker/bogie joints (needs a '
-                        'bullet-featherstone world, e.g. mars_rough_world.sdf)'),
+            description='Unlock the FULL passive suspension (needs the '
+                        'bullet-featherstone world mars_rough_world.sdf)'),
+        DeclareLaunchArgument(
+            'bogies_free',
+            # bogies are independent joints (no closed loop) -> articulate
+            # fine under DART with the calibrated skid-steer odometry, so
+            # autonomy worlds can show live suspension
+            default_value=PythonExpression(
+                ["'true' if 'demo' in '", LaunchConfiguration('world'),
+                 "' else 'false'"]),
+            description='Unlock only the bogie joints (DART-safe live '
+                        'suspension for mars_demo_world.sdf autonomy)'),
 
         gz_sim,
         gz_sim_headless,
