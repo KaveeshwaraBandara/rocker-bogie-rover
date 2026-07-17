@@ -1,25 +1,29 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rb_rover">
 
-  <!-- ============================================================
-       6-wheel rocker-bogie rover
-       Geometry derived from the SolidWorks assembly video/screenshots
-       (Assem8- final.SLDASM), proportions measured relative to wheel
-       diameter. Absolute scale assumes wheel OD = 100 mm — if the real
-       wheel differs, scale the properties below accordingly.
-       Topology (per side, NASA convention, matches the CAD):
-         side plate (on platform) -> rocker (dark, front wheel + top
-         tie-rod extension) -> bogie (tan, middle + rear wheels)
-       Differential bar + tie rods are COSMETIC visuals on base_link
-       (closed kinematic loop, not simulated).
-       Frames: REP-103 — X forward, Y left, Z up. base_link at platform center.
-       ============================================================ -->
 
-  <!-- Sim mode: locks rocker/bogie joints (no differential possible in Gazebo)
-       and loads the Gazebo plugins from rover.gazebo.xacro -->
+  <!-- Sim mode (use_sim): loads the Gazebo plugins from rover.gazebo.xacro.
+       articulated: passive revolute rocker/bogie joints with the differential
+       emulated by a mimic constraint (right rocker = -left rocker), which
+       cancels common-mode chassis pitch exactly like the real tie-rod bar.
+       ONLY the bullet-featherstone physics engine enforces <mimic> at runtime
+       (mars_rough_world.sdf selects it); under DART the rockers flop onto
+       their limits and tilt the chassis/lidar ~20 deg — so in the DART worlds
+       (obstacle/mars) keep articulated:=false, which locks the suspension as
+       in Phases 2-4. sim.launch.py auto-picks this from the world name. -->
   <xacro:arg name="use_sim" default="false"/>
+  <xacro:arg name="articulated" default="false"/>
   <xacro:property name="use_sim" value="$(arg use_sim)"/>
-  <xacro:property name="susp_joint_type" value="${'fixed' if use_sim else 'revolute'}"/>
+  <xacro:property name="articulated" value="$(arg articulated)"/>
+  <!-- suspension locked only in sim without articulation (display mode always
+       articulates so the joint_state_publisher GUI can move the linkage) -->
+  <xacro:property name="susp_locked" value="${use_sim and not articulated}"/>
+
+  <!-- Passive suspension joint dynamics (no springs in a rocker-bogie; damping
+       just settles oscillations) -->
+  <xacro:property name="rocker_damping" value="0.8"/>
+  <xacro:property name="bogie_damping"  value="0.4"/>
+  <xacro:property name="susp_friction"  value="0.05"/>
 
   <!-- Platform (chassis) -->
   <xacro:property name="platform_length"  value="0.45"/>
@@ -76,8 +80,9 @@
   <material name="lidar_red"><color rgba="0.70 0.15 0.15 1.0"/></material>
 
   <!-- ============ inertial helpers (placeholders, needed for Gazebo later) ============ -->
-  <xacro:macro name="box_inertial" params="m x y z">
+  <xacro:macro name="box_inertial" params="m x y z origin_xyz:='0 0 0'">
     <inertial>
+      <origin xyz="${origin_xyz}"/>
       <mass value="${m}"/>
       <inertia ixx="${m*(y*y+z*z)/12}" iyy="${m*(x*x+z*z)/12}" izz="${m*(x*x+y*y)/12}"
                ixy="0" ixz="0" iyz="0"/>
@@ -136,6 +141,17 @@
       <child link="${prefix}_wheel_link"/>
       <origin xyz="${x} ${reflect*(wheel_y - arm_y)} ${z}" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
+      <!-- articulated mode: cap motor torque like a real gearmotor stall.
+           DiffDrive's velocity controller is otherwise unlimited — its
+           reaction torque on the bogie arms rotates them to the joint limit
+           (middle wheels up, rear down) and pitches the rover over its rear
+           axle on flat ground. Window measured empirically: 0.5 N·m stalls
+           on tall pebbles once weight transfer raises the loaded wheel's
+           slip torque (nominal mu*m*g/6 * r ~ 0.3 N·m, ~2x when loaded);
+           bogie jack-up needs ~0.75+. 0.65 climbs without jacking. -->
+      <xacro:if value="${articulated}">
+        <limit effort="0.65" velocity="1000"/>
+      </xacro:if>
     </joint>
     <link name="${prefix}_wheel_link">
       <!-- tire -->
@@ -165,19 +181,25 @@
   </xacro:macro>
 
   <!-- ============ one side of the rocker-bogie suspension ============ -->
-  <!-- side: left|right, reflect: 1|-1 -->
-  <xacro:macro name="suspension_side" params="side reflect">
+  <!-- side: left|right, reflect: 1|-1
+       mimic_rocker: joint name this side's rocker mimics with multiplier -1
+       (differential emulation), or '' for the free side -->
+  <xacro:macro name="suspension_side" params="side reflect mimic_rocker:=''">
 
     <!-- Rocker (dark plate): pivots on the side plate; carries the front wheel,
          the bogie, and the upward tie-rod extension -->
-    <joint name="${side}_rocker_joint" type="${susp_joint_type}">
+    <joint name="${side}_rocker_joint" type="${'fixed' if susp_locked else 'revolute'}">
       <parent link="base_link"/>
       <child link="${side}_rocker_link"/>
       <origin xyz="${rocker_x} ${reflect*arm_y} ${rocker_z}" rpy="0 0 0"/>
-      <xacro:if value="${susp_joint_type == 'revolute'}">
+      <xacro:unless value="${susp_locked}">
         <axis xyz="0 1 0"/>
-        <limit lower="-0.35" upper="0.35" effort="10" velocity="2"/>
-      </xacro:if>
+        <limit lower="-0.35" upper="0.35" effort="20" velocity="3"/>
+        <dynamics damping="${rocker_damping}" friction="${susp_friction}"/>
+        <xacro:if value="${mimic_rocker != ''}">
+          <mimic joint="${mimic_rocker}" multiplier="-1" offset="0"/>
+        </xacro:if>
+      </xacro:unless>
     </joint>
     <link name="${side}_rocker_link">
       <!-- leg to front wheel mount -->
@@ -191,14 +213,15 @@
     </link>
 
     <!-- Bogie (tan plate): pivots on the rocker; carries middle and rear wheels -->
-    <joint name="${side}_bogie_joint" type="${susp_joint_type}">
+    <joint name="${side}_bogie_joint" type="${'fixed' if susp_locked else 'revolute'}">
       <parent link="${side}_rocker_link"/>
       <child link="${side}_bogie_link"/>
       <origin xyz="${bogie_x - rocker_x} 0 ${bogie_z - rocker_z}" rpy="0 0 0"/>
-      <xacro:if value="${susp_joint_type == 'revolute'}">
+      <xacro:unless value="${susp_locked}">
         <axis xyz="0 1 0"/>
-        <limit lower="-0.35" upper="0.35" effort="10" velocity="2"/>
-      </xacro:if>
+        <limit lower="-0.35" upper="0.35" effort="20" velocity="3"/>
+        <dynamics damping="${bogie_damping}" friction="${susp_friction}"/>
+      </xacro:unless>
     </joint>
     <link name="${side}_bogie_link">
       <!-- leg to middle wheel mount -->
@@ -264,11 +287,17 @@
     <collision>
       <geometry><box size="${platform_length} ${platform_width} ${platform_height}"/></geometry>
     </collision>
-    <xacro:box_inertial m="2.5" x="${platform_length}" y="${platform_width}" z="${platform_height}"/>
+    <!-- CG dropped below the platform (electronics box hangs underneath).
+         Keeps the flip threshold above what wheel thrust can produce: the
+         rover wheelied over backwards on >=4 cm obstacles with the CG at
+         platform level (thrust torque mu*m*g*h_cg vs restoring m*g*x_rear;
+         needs h_cg < x_rear / mu). -->
+    <xacro:box_inertial m="2.5" x="${platform_length}" y="${platform_width}" z="${platform_height}"
+                        origin_xyz="0 0 -0.06"/>
   </link>
 
   <xacro:suspension_side side="left"  reflect="1"/>
-  <xacro:suspension_side side="right" reflect="-1"/>
+  <xacro:suspension_side side="right" reflect="-1" mimic_rocker="left_rocker_joint"/>
 
   <!-- Lidar -->
   <joint name="laser_joint" type="fixed">

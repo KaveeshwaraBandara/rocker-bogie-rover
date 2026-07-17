@@ -5,7 +5,8 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (Command, LaunchConfiguration,
+                                  PathJoinSubstitution, PythonExpression)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -22,7 +23,9 @@ def generate_launch_description():
     rviz_config = os.path.join(pkg_gazebo, 'rviz', 'sim.rviz')
 
     robot_description = ParameterValue(
-        Command(['xacro ', xacro_file, ' use_sim:=true']), value_type=str)
+        Command(['xacro ', xacro_file, ' use_sim:=true',
+                 ' articulated:=', LaunchConfiguration('articulated')]),
+        value_type=str)
 
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -46,7 +49,18 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world', default_value='obstacle_world.sdf',
             description='World file name in rover_gazebo/worlds '
-                        '(obstacle_world.sdf or mars_world.sdf)'),
+                        '(obstacle_world.sdf, mars_world.sdf or '
+                        'mars_rough_world.sdf suspension test track)'),
+        DeclareLaunchArgument(
+            'articulated',
+            # passive rocker-bogie suspension needs the mimic (differential)
+            # constraint, which only the bullet-featherstone engine enforces —
+            # default on exactly for the world built on that engine
+            default_value=PythonExpression(
+                ["'true' if 'rough' in '", LaunchConfiguration('world'),
+                 "' else 'false'"]),
+            description='Unlock passive rocker/bogie joints (needs a '
+                        'bullet-featherstone world, e.g. mars_rough_world.sdf)'),
 
         gz_sim,
         gz_sim_headless,
