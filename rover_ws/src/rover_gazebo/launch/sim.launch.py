@@ -5,7 +5,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -16,7 +16,8 @@ def generate_launch_description():
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
     xacro_file = os.path.join(pkg_description, 'urdf', 'rover.urdf.xacro')
-    world_file = os.path.join(pkg_gazebo, 'worlds', 'obstacle_world.sdf')
+    world_file = PathJoinSubstitution(
+        [pkg_gazebo, 'worlds', LaunchConfiguration('world')])
     bridge_config = os.path.join(pkg_gazebo, 'config', 'gz_bridge.yaml')
     rviz_config = os.path.join(pkg_gazebo, 'rviz', 'sim.rviz')
 
@@ -42,6 +43,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'headless', default_value='false',
             description='Run Gazebo server only, no GUI (for SLAM/testing)'),
+        DeclareLaunchArgument(
+            'world', default_value='obstacle_world.sdf',
+            description='World file name in rover_gazebo/worlds '
+                        '(obstacle_world.sdf or mars_world.sdf)'),
 
         gz_sim,
         gz_sim_headless,
