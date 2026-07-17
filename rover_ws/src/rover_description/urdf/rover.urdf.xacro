@@ -1,0 +1,295 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="rb_rover">
+
+  <!-- ============================================================
+       6-wheel rocker-bogie rover
+       Geometry derived from the SolidWorks assembly video/screenshots
+       (Assem8- final.SLDASM), proportions measured relative to wheel
+       diameter. Absolute scale assumes wheel OD = 100 mm — if the real
+       wheel differs, scale the properties below accordingly.
+       Topology (per side, NASA convention, matches the CAD):
+         side plate (on platform) -> rocker (dark, front wheel + top
+         tie-rod extension) -> bogie (tan, middle + rear wheels)
+       Differential bar + tie rods are COSMETIC visuals on base_link
+       (closed kinematic loop, not simulated).
+       Frames: REP-103 — X forward, Y left, Z up. base_link at platform center.
+       ============================================================ -->
+
+  <!-- Sim mode: locks rocker/bogie joints (no differential possible in Gazebo)
+       and loads the Gazebo plugins from rover.gazebo.xacro -->
+  <xacro:arg name="use_sim" default="false"/>
+  <xacro:property name="use_sim" value="$(arg use_sim)"/>
+  <xacro:property name="susp_joint_type" value="${'fixed' if use_sim else 'revolute'}"/>
+
+  <!-- Platform (chassis) -->
+  <xacro:property name="platform_length"  value="0.45"/>
+  <xacro:property name="platform_width"   value="0.25"/>
+  <xacro:property name="platform_height"  value="0.012"/>
+  <xacro:property name="base_z"           value="0.24"/>   <!-- base_link height above ground -->
+
+  <!-- Side plates (hold the rocker pivots, hang from platform underside) -->
+  <xacro:property name="plate_length" value="0.26"/>
+  <xacro:property name="plate_xmid"   value="-0.03"/>
+  <xacro:property name="plate_depth"  value="0.06"/>   <!-- vertical extent below platform -->
+  <xacro:property name="plate_y"      value="0.132"/>  <!-- plate mid-plane from centerline -->
+  <xacro:property name="plate_thick"  value="0.007"/>
+
+  <!-- Wheels: black tire + bronze hub -->
+  <xacro:property name="wheel_radius" value="0.05"/>
+  <xacro:property name="wheel_width"  value="0.045"/>
+  <xacro:property name="hub_radius"   value="0.028"/>
+  <xacro:property name="wheel_y"      value="0.19"/>   <!-- wheel center from centerline -->
+
+  <!-- Suspension arms: wide flat plates -->
+  <xacro:property name="arm_y"        value="0.145"/>  <!-- arm plane from centerline -->
+  <xacro:property name="arm_thick"    value="0.008"/>
+  <xacro:property name="arm_width"    value="0.042"/>
+  <xacro:property name="rocker_x"     value="0.03"/>   <!-- rocker pivot (on side plate) -->
+  <xacro:property name="rocker_z"     value="-0.05"/>
+  <xacro:property name="rocker_ext"   value="0.035"/>  <!-- upward tie-rod extension above pivot -->
+  <xacro:property name="bogie_x"      value="-0.11"/>  <!-- bogie pivot (on rocker) -->
+  <xacro:property name="bogie_z"      value="-0.12"/>
+  <xacro:property name="front_wheel_x"  value="0.20"/>
+  <xacro:property name="middle_wheel_x" value="-0.02"/>
+  <xacro:property name="rear_wheel_x"   value="-0.20"/>
+  <xacro:property name="wheel_z"        value="${-(base_z - wheel_radius)}"/>
+
+  <!-- Differential (cosmetic): blue bracket + transverse bar + tie rods -->
+  <xacro:property name="diff_x"       value="-0.02"/>
+  <xacro:property name="diff_z"       value="-0.025"/>
+  <xacro:property name="diff_bar_half" value="0.10"/>
+
+  <!-- Lidar -->
+  <xacro:property name="lidar_x"      value="0.15"/>
+  <xacro:property name="lidar_radius" value="0.035"/>
+  <xacro:property name="lidar_height" value="0.04"/>
+
+  <!-- Materials (matched to CAD appearance) -->
+  <material name="platform_grey"><color rgba="0.78 0.78 0.80 1.0"/></material>
+  <material name="plate_lavender"><color rgba="0.70 0.71 0.80 1.0"/></material>
+  <material name="rocker_dark"><color rgba="0.22 0.22 0.24 1.0"/></material>
+  <material name="bogie_tan"><color rgba="0.72 0.66 0.54 1.0"/></material>
+  <material name="tire_black"><color rgba="0.08 0.08 0.08 1.0"/></material>
+  <material name="hub_bronze"><color rgba="0.55 0.38 0.20 1.0"/></material>
+  <material name="diff_blue"><color rgba="0.12 0.20 0.55 1.0"/></material>
+  <material name="rod_silver"><color rgba="0.75 0.75 0.75 1.0"/></material>
+  <material name="lidar_red"><color rgba="0.70 0.15 0.15 1.0"/></material>
+
+  <!-- ============ inertial helpers (placeholders, needed for Gazebo later) ============ -->
+  <xacro:macro name="box_inertial" params="m x y z">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(y*y+z*z)/12}" iyy="${m*(x*x+z*z)/12}" izz="${m*(x*x+y*y)/12}"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </xacro:macro>
+  <xacro:macro name="cylinder_inertial" params="m r h">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(3*r*r+h*h)/12}" iyy="${m*(3*r*r+h*h)/12}" izz="${m*r*r/2}"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Arm segment: flat plate from link origin to endpoint (dx, dz) in the X-Z plane -->
+  <xacro:macro name="arm_segment" params="dx dz material">
+    <visual>
+      <origin xyz="${dx/2} 0 ${dz/2}" rpy="0 ${atan2(-dz, dx)} 0"/>
+      <geometry>
+        <box size="${sqrt(dx*dx + dz*dz) + arm_width*0.6} ${arm_thick} ${arm_width}"/>
+      </geometry>
+      <material name="${material}"/>
+    </visual>
+    <collision>
+      <origin xyz="${dx/2} 0 ${dz/2}" rpy="0 ${atan2(-dz, dx)} 0"/>
+      <geometry>
+        <box size="${sqrt(dx*dx + dz*dz)} ${arm_thick} ${arm_width}"/>
+      </geometry>
+    </collision>
+  </xacro:macro>
+
+  <!-- Generic 3D segment (visual only): thin bar from (x1,y1,z1) to (x2,y2,z2) on base_link -->
+  <xacro:macro name="rod_segment" params="x1 y1 z1 x2 y2 z2 thick material">
+    <visual>
+      <origin xyz="${(x1+x2)/2} ${(y1+y2)/2} ${(z1+z2)/2}"
+              rpy="0 ${atan2(-(z2-z1), sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1)))} ${atan2(y2-y1, x2-x1)}"/>
+      <geometry>
+        <box size="${sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1)+(z2-z1)*(z2-z1))} ${thick} ${thick}"/>
+      </geometry>
+      <material name="${material}"/>
+    </visual>
+  </xacro:macro>
+
+  <!-- Pivot hub: pin spanning from the mount plate through the arm -->
+  <xacro:macro name="pivot_hub" params="reflect length">
+    <visual>
+      <origin xyz="0 ${-reflect*length/4} 0" rpy="${pi/2} 0 0"/>
+      <geometry><cylinder radius="0.012" length="${length}"/></geometry>
+      <material name="rod_silver"/>
+    </visual>
+  </xacro:macro>
+
+  <!-- ============ wheel macro ============ -->
+  <xacro:macro name="wheel" params="prefix parent x z reflect">
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="${parent}"/>
+      <child link="${prefix}_wheel_link"/>
+      <origin xyz="${x} ${reflect*(wheel_y - arm_y)} ${z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+    <link name="${prefix}_wheel_link">
+      <!-- tire -->
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="tire_black"/>
+      </visual>
+      <!-- bronze hub -->
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${hub_radius}" length="${wheel_width + 0.004}"/></geometry>
+        <material name="hub_bronze"/>
+      </visual>
+      <!-- axle back through the suspension arm -->
+      <visual>
+        <origin xyz="0 ${-reflect*0.025} 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="0.008" length="0.08"/></geometry>
+        <material name="rod_silver"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+      <xacro:cylinder_inertial m="0.35" r="${wheel_radius}" h="${wheel_width}"/>
+    </link>
+  </xacro:macro>
+
+  <!-- ============ one side of the rocker-bogie suspension ============ -->
+  <!-- side: left|right, reflect: 1|-1 -->
+  <xacro:macro name="suspension_side" params="side reflect">
+
+    <!-- Rocker (dark plate): pivots on the side plate; carries the front wheel,
+         the bogie, and the upward tie-rod extension -->
+    <joint name="${side}_rocker_joint" type="${susp_joint_type}">
+      <parent link="base_link"/>
+      <child link="${side}_rocker_link"/>
+      <origin xyz="${rocker_x} ${reflect*arm_y} ${rocker_z}" rpy="0 0 0"/>
+      <xacro:if value="${susp_joint_type == 'revolute'}">
+        <axis xyz="0 1 0"/>
+        <limit lower="-0.35" upper="0.35" effort="10" velocity="2"/>
+      </xacro:if>
+    </joint>
+    <link name="${side}_rocker_link">
+      <!-- leg to front wheel mount -->
+      <xacro:arm_segment dx="${front_wheel_x - rocker_x}" dz="${wheel_z - rocker_z}" material="rocker_dark"/>
+      <!-- leg to bogie pivot -->
+      <xacro:arm_segment dx="${bogie_x - rocker_x}" dz="${bogie_z - rocker_z}" material="rocker_dark"/>
+      <!-- upward extension for the tie rod -->
+      <xacro:arm_segment dx="0.001" dz="${rocker_ext}" material="rocker_dark"/>
+      <xacro:pivot_hub reflect="${reflect}" length="${(arm_y - plate_y) * 2 + arm_thick}"/>
+      <xacro:box_inertial m="0.4" x="0.34" y="${arm_thick}" z="${arm_width}"/>
+    </link>
+
+    <!-- Bogie (tan plate): pivots on the rocker; carries middle and rear wheels -->
+    <joint name="${side}_bogie_joint" type="${susp_joint_type}">
+      <parent link="${side}_rocker_link"/>
+      <child link="${side}_bogie_link"/>
+      <origin xyz="${bogie_x - rocker_x} 0 ${bogie_z - rocker_z}" rpy="0 0 0"/>
+      <xacro:if value="${susp_joint_type == 'revolute'}">
+        <axis xyz="0 1 0"/>
+        <limit lower="-0.35" upper="0.35" effort="10" velocity="2"/>
+      </xacro:if>
+    </joint>
+    <link name="${side}_bogie_link">
+      <!-- leg to middle wheel mount -->
+      <xacro:arm_segment dx="${middle_wheel_x - bogie_x}" dz="${wheel_z - bogie_z}" material="bogie_tan"/>
+      <!-- leg to rear wheel mount -->
+      <xacro:arm_segment dx="${rear_wheel_x - bogie_x}" dz="${wheel_z - bogie_z}" material="bogie_tan"/>
+      <xacro:pivot_hub reflect="${reflect}" length="${arm_thick*2 + 0.014}"/>
+      <xacro:box_inertial m="0.3" x="0.22" y="${arm_thick}" z="${arm_width}"/>
+    </link>
+
+    <!-- Wheels -->
+    <xacro:wheel prefix="${side}_front"  parent="${side}_rocker_link"
+                 x="${front_wheel_x - rocker_x}" z="${wheel_z - rocker_z}" reflect="${reflect}"/>
+    <xacro:wheel prefix="${side}_middle" parent="${side}_bogie_link"
+                 x="${middle_wheel_x - bogie_x}" z="${wheel_z - bogie_z}" reflect="${reflect}"/>
+    <xacro:wheel prefix="${side}_rear"   parent="${side}_bogie_link"
+                 x="${rear_wheel_x - bogie_x}" z="${wheel_z - bogie_z}" reflect="${reflect}"/>
+
+    <!-- Tie rod (cosmetic, aligned at nominal pose): rocker extension -> differential bar end -->
+    <xacro:rod_segment x1="${rocker_x}" y1="${reflect*arm_y}" z1="${rocker_z + rocker_ext}"
+                       x2="${diff_x}"   y2="${reflect*diff_bar_half}" z2="${diff_z}"
+                       thick="0.007" material="rod_silver"/>
+  </xacro:macro>
+
+  <!-- ============ links ============ -->
+
+  <!-- Ground-projected frame (REP-105), used by SLAM/Nav2 later -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${base_z}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <geometry><box size="${platform_length} ${platform_width} ${platform_height}"/></geometry>
+      <material name="platform_grey"/>
+    </visual>
+    <!-- side plates holding the rocker pivots -->
+    <visual>
+      <origin xyz="${plate_xmid} ${plate_y} ${-(platform_height/2 + plate_depth/2)}" rpy="0 0 0"/>
+      <geometry><box size="${plate_length} ${plate_thick} ${plate_depth}"/></geometry>
+      <material name="plate_lavender"/>
+    </visual>
+    <visual>
+      <origin xyz="${plate_xmid} ${-plate_y} ${-(platform_height/2 + plate_depth/2)}" rpy="0 0 0"/>
+      <geometry><box size="${plate_length} ${plate_thick} ${plate_depth}"/></geometry>
+      <material name="plate_lavender"/>
+    </visual>
+    <!-- differential bracket (blue) under platform center -->
+    <visual>
+      <origin xyz="${diff_x} 0 ${diff_z}" rpy="0 0 0"/>
+      <geometry><box size="0.10 0.06 0.028"/></geometry>
+      <material name="diff_blue"/>
+    </visual>
+    <!-- transverse differential bar -->
+    <visual>
+      <origin xyz="${diff_x} 0 ${diff_z}" rpy="${pi/2} 0 0"/>
+      <geometry><cylinder radius="0.005" length="${diff_bar_half*2}"/></geometry>
+      <material name="rod_silver"/>
+    </visual>
+    <collision>
+      <geometry><box size="${platform_length} ${platform_width} ${platform_height}"/></geometry>
+    </collision>
+    <xacro:box_inertial m="2.5" x="${platform_length}" y="${platform_width}" z="${platform_height}"/>
+  </link>
+
+  <xacro:suspension_side side="left"  reflect="1"/>
+  <xacro:suspension_side side="right" reflect="-1"/>
+
+  <!-- Lidar -->
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_frame"/>
+    <origin xyz="${lidar_x} 0 ${platform_height/2 + lidar_height/2}" rpy="0 0 0"/>
+  </joint>
+  <link name="laser_frame">
+    <visual>
+      <geometry><cylinder radius="${lidar_radius}" length="${lidar_height}"/></geometry>
+      <material name="lidar_red"/>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="${lidar_radius}" length="${lidar_height}"/></geometry>
+    </collision>
+    <xacro:cylinder_inertial m="0.15" r="${lidar_radius}" h="${lidar_height}"/>
+  </link>
+
+  <!-- Gazebo plugins (drive, joint states, lidar sensor) -->
+  <xacro:if value="${use_sim}">
+    <xacro:include filename="$(find rover_description)/urdf/rover.gazebo.xacro"/>
+  </xacro:if>
+
+</robot>

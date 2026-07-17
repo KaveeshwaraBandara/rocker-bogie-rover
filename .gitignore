@@ -1,0 +1,23 @@
+# colcon build artifacts
+rover_ws/build/
+rover_ws/install/
+rover_ws/log/
+
+# ROS runtime logs
+*.pcd
+frames*.gv
+frames*.pdf
+
+# SolidWorks temp/backup/lock files
+~$*
+*.bak
+*.swx
+*.sldlfp
+
+# OS / editor noise
+.vscode/
+*.autosave
+Thumbs.db
+.DS_Store
+
+CLAUDE.md
