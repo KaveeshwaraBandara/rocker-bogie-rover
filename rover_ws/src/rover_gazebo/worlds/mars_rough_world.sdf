@@ -6,11 +6,10 @@
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1.0</real_time_factor>
     </physics>
-    <!-- bullet-featherstone instead of DART: it enforces the <mimic> joint
-         constraint (rocker differential); DART in Harmonic does not -->
-    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics">
-      <engine><filename>gz-physics-bullet-featherstone-plugin</filename></engine>
-    </plugin>
+    <!-- DART (default). The rocker differential is enforced by the
+         RockerDifferential system plugin, so bullet-featherstone (which
+         cannot do controllable skid-steer) is no longer needed. -->
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
     <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
     <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">

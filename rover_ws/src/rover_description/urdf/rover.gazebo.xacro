@@ -32,28 +32,51 @@
     </plugin>
   </gazebo>
 
-  <!-- Articulated mode: cap wheel friction below the wheelie threshold.
-       DiffDrive is a velocity controller with unlimited torque, so when the
-       front wheels catch a step lip the thrust (mu*m*g acting at ground level,
-       CG 0.24 m up, rear contact 0.20 m back) flips the rover backwards once
-       mu > 0.20/0.24 ~ 0.83 — independent of mass. mu1 0.7 keeps climbing
-       ability (12 deg ramps need ~0.25) but lets wheels slip instead of
-       flipping; lower lateral mu2 eases skid-steer scrub. Scoped to
-       articulated only so the DART worlds keep their calibrated behavior. -->
-  <xacro:if value="${articulated}">
-    <xacro:macro name="wheel_friction" params="prefix">
-      <gazebo reference="${prefix}_wheel_link">
-        <mu1>0.7</mu1>
-        <mu2>0.5</mu2>
-      </gazebo>
-    </xacro:macro>
-    <xacro:wheel_friction prefix="left_front"/>
-    <xacro:wheel_friction prefix="left_middle"/>
-    <xacro:wheel_friction prefix="left_rear"/>
-    <xacro:wheel_friction prefix="right_front"/>
-    <xacro:wheel_friction prefix="right_middle"/>
-    <xacro:wheel_friction prefix="right_rear"/>
-  </xacro:if>
+  <!-- Wheel friction, ISOTROPIC and slightly below the default 1.0.
+       Skid-steer yaw resistance is paid for by drive torque, and that torque
+       reacts on the bogie arm and jacks the front wheel off the ground
+       (runaway: as the wheel unloads, the other bogie wheel grips harder).
+       mu 0.8 drops the in-place-turn demand to ~0.40 N.m, under the stall
+       cap, while keeping plenty of traction for climbing.
+       Keep mu1 == mu2: without an explicit <fdir1> the two friction
+       DIRECTIONS are arbitrary (not longitudinal/lateral), so anisotropic
+       values make skid-steer unpredictable — measured mu1 0.9 / mu2 0.4 and
+       got a 5x arc-yaw error. -->
+  <xacro:macro name="wheel_friction" params="prefix">
+    <gazebo reference="${prefix}_wheel_link">
+      <mu1>0.8</mu1>
+      <mu2>0.8</mu2>
+    </gazebo>
+  </xacro:macro>
+  <xacro:wheel_friction prefix="left_front"/>
+  <xacro:wheel_friction prefix="left_middle"/>
+  <xacro:wheel_friction prefix="left_rear"/>
+  <xacro:wheel_friction prefix="right_front"/>
+  <xacro:wheel_friction prefix="right_middle"/>
+  <xacro:wheel_friction prefix="right_rear"/>
+
+  <!-- Rocker differential (rover_gz_plugins).
+       The real rover ties the two rockers together with tie rods and a
+       pivoting lever, so left_rocker_joint = -right_rocker_joint and the
+       chassis rides the AVERAGE of the two sides. That linkage is a closed
+       kinematic loop, which gz-physics refuses to build ("child link
+       already has a parent joint"), and SDF <mimic> — the other way to say
+       it — is ignored by DART. This system applies the same constraint as a
+       stiff PD inside the physics loop, leaving the differential mode
+       (one rocker up, the other down) completely free.
+       sim.launch.py adds the install dir to GZ_SIM_SYSTEM_PLUGIN_PATH. -->
+  <xacro:unless value="${susp_locked}">
+    <gazebo>
+      <plugin filename="RockerDifferential"
+              name="rover_gz_plugins::RockerDifferential">
+        <left_joint>left_rocker_joint</left_joint>
+        <right_joint>right_rocker_joint</right_joint>
+        <p_gain>250.0</p_gain>
+        <d_gain>15.0</d_gain>
+        <max_torque>80.0</max_torque>
+      </plugin>
+    </gazebo>
+  </xacro:unless>
 
   <!-- 2D lidar on laser_frame -->
   <gazebo reference="laser_frame">

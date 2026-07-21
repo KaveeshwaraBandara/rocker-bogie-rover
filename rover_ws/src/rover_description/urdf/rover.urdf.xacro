@@ -3,37 +3,42 @@
 
 
   <!-- Sim mode (use_sim): loads the Gazebo plugins from rover.gazebo.xacro.
-       Suspension modes in sim (auto-picked by sim.launch.py from the world):
-       - articulated: FULL passive suspension — rockers + bogies revolute,
-         differential emulated by a mimic constraint (right rocker = -left
-         rocker, exactly the tie-rod bar constraint). Requires the
-         bullet-featherstone engine (mars_rough_world.sdf): DART ignores
-         <mimic> and the rockers flop 20 deg onto their limits. Bullet in
-         turn cannot do controllable skid-steer rotation (line-contact
-         cylinder wheels grip torsionally; sphere wheels are erratic), so
-         this mode is for teleop/scripted suspension demos, NOT Nav2.
-       - bogies_free: bogies revolute, rockers locked. The bogies are
-         independent joints (no closed loop), so this works under DART with
-         the calibrated skid-steer odometry intact -> live suspension
-         articulation DURING autonomous SLAM/Nav2 (mars_demo_world.sdf).
-       - neither: fully locked (obstacle/mars worlds, Phases 2-4). -->
+       The suspension is FULLY articulated: both rockers and both bogies are
+       passive revolute joints, and the tie-rod differential (left rocker
+       angle = -right rocker angle) is enforced by the RockerDifferential
+       Gazebo system plugin (rover_gz_plugins).
+       The differential cannot be modelled as geometry: it is a closed
+       kinematic loop, and gz-physics rejects loop-closing joints ("child
+       link already has a parent joint"), while SDF <mimic> is ignored by
+       the DART engine. Without it the suspension has one free internal DOF
+       — both rockers rotate together, the chassis pitches onto the joint
+       limits and the lidar tilts ~20 deg. See rover.gazebo.xacro.
+       locked_suspension:=true rigidifies the arms (debug escape hatch). -->
   <xacro:arg name="use_sim" default="false"/>
-  <xacro:arg name="articulated" default="false"/>
-  <xacro:arg name="bogies_free" default="false"/>
+  <xacro:arg name="locked_suspension" default="false"/>
   <xacro:property name="use_sim" value="$(arg use_sim)"/>
-  <xacro:property name="articulated" value="$(arg articulated)"/>
-  <xacro:property name="bogies_free" value="$(arg bogies_free)"/>
-  <!-- display mode (not use_sim) always articulates everything so the
-       joint_state_publisher GUI can move the linkage -->
-  <xacro:property name="rocker_locked" value="${use_sim and not articulated}"/>
-  <xacro:property name="bogie_locked"
-                  value="${use_sim and not (articulated or bogies_free)}"/>
+  <xacro:property name="locked_suspension" value="$(arg locked_suspension)"/>
+  <xacro:property name="susp_locked" value="${use_sim and locked_suspension}"/>
 
   <!-- Passive suspension joint dynamics (no springs in a rocker-bogie; damping
        just settles oscillations) -->
   <xacro:property name="rocker_damping" value="0.8"/>
   <xacro:property name="bogie_damping"  value="0.4"/>
   <xacro:property name="susp_friction"  value="0.05"/>
+
+  <!-- Drive motor stall torque. REQUIRED, not a tuning knob: gz DiffDrive is
+       a velocity controller with otherwise UNBOUNDED torque, and a wheel's
+       drive torque reacts on the arm it hangs from. Both bogie wheels react
+       on the same bogie, so their torques make a couple across the 2*0.09 m
+       bogie arm; once that couple exceeds a wheel's static load (~10 N for
+       this 6.15 kg rover) it levers the front wheel clean off the ground —
+       seen as the front-right wheel lifting off during skid-steer turns and
+       pinning the bogie at its -0.35 rad limit. Works together with the
+       anisotropic wheel friction in rover.gazebo.xacro (low lateral mu is
+       what actually cuts the turn torque demand); the cap bounds the spikes.
+       Keep <limit velocity> huge — a real limit there breaks drive resume
+       after a stop. -->
+  <xacro:property name="wheel_stall_torque" value="0.6"/>
 
   <!-- Platform (chassis) -->
   <xacro:property name="platform_length"  value="0.45"/>
@@ -43,7 +48,7 @@
 
   <!-- Side plates (hold the rocker pivots, hang from platform underside) -->
   <xacro:property name="plate_length" value="0.26"/>
-  <xacro:property name="plate_xmid"   value="-0.03"/>
+  <xacro:property name="plate_xmid"   value="0.03"/>
   <xacro:property name="plate_depth"  value="0.06"/>   <!-- vertical extent below platform -->
   <xacro:property name="plate_y"      value="0.132"/>  <!-- plate mid-plane from centerline -->
   <xacro:property name="plate_thick"  value="0.007"/>
@@ -58,22 +63,28 @@
   <xacro:property name="arm_y"        value="0.145"/>  <!-- arm plane from centerline -->
   <xacro:property name="arm_thick"    value="0.008"/>
   <xacro:property name="arm_width"    value="0.042"/>
-  <xacro:property name="rocker_x"     value="0.03"/>   <!-- rocker pivot (on side plate) -->
+  <!-- X layout (REP-103: +X = forward). Per the CAD (Assem6/Assem8), the
+       BOGIE end leads: the bogie's two wheels are the front and middle
+       wheels, and the rocker's long trailing leg carries the single rear
+       wheel. The lidar therefore sits over the bogie end. -->
+  <xacro:property name="rocker_x"     value="-0.03"/>  <!-- rocker pivot (on side plate), behind centre -->
   <xacro:property name="rocker_z"     value="-0.05"/>
   <xacro:property name="rocker_ext"   value="0.035"/>  <!-- upward tie-rod extension above pivot -->
-  <xacro:property name="bogie_x"      value="-0.11"/>  <!-- bogie pivot (on rocker) -->
+  <xacro:property name="bogie_x"      value="0.11"/>   <!-- bogie pivot (on rocker), ahead of it -->
   <xacro:property name="bogie_z"      value="-0.12"/>
-  <xacro:property name="front_wheel_x"  value="0.20"/>
-  <xacro:property name="middle_wheel_x" value="-0.02"/>
-  <xacro:property name="rear_wheel_x"   value="-0.20"/>
+  <xacro:property name="front_wheel_x"  value="0.20"/>   <!-- on BOGIE, leads -->
+  <xacro:property name="middle_wheel_x" value="0.02"/>   <!-- on BOGIE -->
+  <xacro:property name="rear_wheel_x"   value="-0.20"/>  <!-- on ROCKER, trails -->
   <xacro:property name="wheel_z"        value="${-(base_z - wheel_radius)}"/>
 
-  <!-- Differential (cosmetic): blue bracket + transverse bar + tie rods -->
-  <xacro:property name="diff_x"       value="-0.02"/>
+  <!-- Differential: blue bracket + transverse lever + tie rods. The visuals
+       are cosmetic (they line up at the nominal pose); the CONSTRAINT they
+       represent is enforced by the RockerDifferential plugin. -->
+  <xacro:property name="diff_x"       value="0.02"/>
   <xacro:property name="diff_z"       value="-0.025"/>
   <xacro:property name="diff_bar_half" value="0.10"/>
 
-  <!-- Lidar -->
+  <!-- Lidar: on the platform over the FRONT (bogie) end -->
   <xacro:property name="lidar_x"      value="0.15"/>
   <xacro:property name="lidar_radius" value="0.035"/>
   <xacro:property name="lidar_height" value="0.04"/>
@@ -151,17 +162,7 @@
       <child link="${prefix}_wheel_link"/>
       <origin xyz="${x} ${reflect*(wheel_y - arm_y)} ${z}" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
-      <!-- articulated mode: cap motor torque like a real gearmotor stall.
-           DiffDrive's velocity controller is otherwise unlimited — its
-           reaction torque on the bogie arms rotates them to the joint limit
-           (middle wheels up, rear down) and pitches the rover over its rear
-           axle on flat ground. Window measured empirically: 0.5 N·m stalls
-           on tall pebbles once weight transfer raises the loaded wheel's
-           slip torque (nominal mu*m*g/6 * r ~ 0.3 N·m, ~2x when loaded);
-           bogie jack-up needs ~0.75+. 0.65 climbs without jacking. -->
-      <xacro:if value="${articulated}">
-        <limit effort="0.65" velocity="1000"/>
-      </xacro:if>
+      <limit effort="${wheel_stall_torque}" velocity="1000"/>
     </joint>
     <link name="${prefix}_wheel_link">
       <!-- tire -->
@@ -182,51 +183,38 @@
         <geometry><cylinder radius="0.008" length="0.08"/></geometry>
         <material name="rod_silver"/>
       </visual>
-      <!-- Articulated (bullet) mode uses SPHERE collision wheels: bullet's
-           cylinder-plane line contact grips torsionally like a parked car
-           tire — with 6 of them the rover cannot skid-rotate in place AT ALL
-           (measured: 0.8 rad/s commanded -> 0.01 rad/s actual, any mu).
-           A point contact pivots freely. DART worlds keep the cylinder. -->
-      <xacro:if value="${articulated}">
-        <collision>
-          <geometry><sphere radius="${wheel_radius}"/></geometry>
-        </collision>
-      </xacro:if>
-      <xacro:unless value="${articulated}">
-        <collision>
-          <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
-          <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
-        </collision>
-      </xacro:unless>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
       <xacro:cylinder_inertial m="0.35" r="${wheel_radius}" h="${wheel_width}"/>
     </link>
   </xacro:macro>
 
   <!-- ============ one side of the rocker-bogie suspension ============ -->
   <!-- side: left|right, reflect: 1|-1
-       mimic_rocker: joint name this side's rocker mimics with multiplier -1
-       (differential emulation), or '' for the free side -->
-  <xacro:macro name="suspension_side" params="side reflect mimic_rocker:=''">
+       Topology matches the CAD (Assem6-left): the rocker pivots on the side
+       plate and its long TRAILING leg carries the rear wheel; its forward
+       leg carries the bogie pivot; the bogie V-arm carries the front and
+       middle wheels. -->
+  <xacro:macro name="suspension_side" params="side reflect">
 
-    <!-- Rocker (dark plate): pivots on the side plate; carries the front wheel,
-         the bogie, and the upward tie-rod extension -->
-    <joint name="${side}_rocker_joint" type="${'fixed' if rocker_locked else 'revolute'}">
+    <!-- Rocker (dark plate): carries the rear wheel, the bogie, and the
+         upward tie-rod extension that drives the differential -->
+    <joint name="${side}_rocker_joint" type="${'fixed' if susp_locked else 'revolute'}">
       <parent link="base_link"/>
       <child link="${side}_rocker_link"/>
       <origin xyz="${rocker_x} ${reflect*arm_y} ${rocker_z}" rpy="0 0 0"/>
-      <xacro:unless value="${rocker_locked}">
+      <xacro:unless value="${susp_locked}">
         <axis xyz="0 1 0"/>
         <limit lower="-0.35" upper="0.35" effort="20" velocity="3"/>
         <dynamics damping="${rocker_damping}" friction="${susp_friction}"/>
-        <xacro:if value="${mimic_rocker != ''}">
-          <mimic joint="${mimic_rocker}" multiplier="-1" offset="0"/>
-        </xacro:if>
       </xacro:unless>
     </joint>
     <link name="${side}_rocker_link">
-      <!-- leg to front wheel mount -->
-      <xacro:arm_segment dx="${front_wheel_x - rocker_x}" dz="${wheel_z - rocker_z}" material="rocker_dark"/>
-      <!-- leg to bogie pivot -->
+      <!-- trailing leg to rear wheel mount -->
+      <xacro:arm_segment dx="${rear_wheel_x - rocker_x}" dz="${wheel_z - rocker_z}" material="rocker_dark"/>
+      <!-- forward leg to bogie pivot -->
       <xacro:arm_segment dx="${bogie_x - rocker_x}" dz="${bogie_z - rocker_z}" material="rocker_dark"/>
       <!-- upward extension for the tie rod -->
       <xacro:arm_segment dx="0.001" dz="${rocker_ext}" material="rocker_dark"/>
@@ -234,33 +222,33 @@
       <xacro:box_inertial m="0.4" x="0.34" y="${arm_thick}" z="${arm_width}"/>
     </link>
 
-    <!-- Bogie (tan plate): pivots on the rocker; carries middle and rear wheels -->
-    <joint name="${side}_bogie_joint" type="${'fixed' if bogie_locked else 'revolute'}">
+    <!-- Bogie (tan V-arm): pivots on the rocker; carries front and middle wheels -->
+    <joint name="${side}_bogie_joint" type="${'fixed' if susp_locked else 'revolute'}">
       <parent link="${side}_rocker_link"/>
       <child link="${side}_bogie_link"/>
       <origin xyz="${bogie_x - rocker_x} 0 ${bogie_z - rocker_z}" rpy="0 0 0"/>
-      <xacro:unless value="${bogie_locked}">
+      <xacro:unless value="${susp_locked}">
         <axis xyz="0 1 0"/>
         <limit lower="-0.35" upper="0.35" effort="20" velocity="3"/>
         <dynamics damping="${bogie_damping}" friction="${susp_friction}"/>
       </xacro:unless>
     </joint>
     <link name="${side}_bogie_link">
+      <!-- leg to front wheel mount -->
+      <xacro:arm_segment dx="${front_wheel_x - bogie_x}" dz="${wheel_z - bogie_z}" material="bogie_tan"/>
       <!-- leg to middle wheel mount -->
       <xacro:arm_segment dx="${middle_wheel_x - bogie_x}" dz="${wheel_z - bogie_z}" material="bogie_tan"/>
-      <!-- leg to rear wheel mount -->
-      <xacro:arm_segment dx="${rear_wheel_x - bogie_x}" dz="${wheel_z - bogie_z}" material="bogie_tan"/>
       <xacro:pivot_hub reflect="${reflect}" length="${arm_thick*2 + 0.014}"/>
       <xacro:box_inertial m="0.3" x="0.22" y="${arm_thick}" z="${arm_width}"/>
     </link>
 
-    <!-- Wheels -->
-    <xacro:wheel prefix="${side}_front"  parent="${side}_rocker_link"
-                 x="${front_wheel_x - rocker_x}" z="${wheel_z - rocker_z}" reflect="${reflect}"/>
+    <!-- Wheels: front + middle on the bogie, rear on the rocker -->
+    <xacro:wheel prefix="${side}_front"  parent="${side}_bogie_link"
+                 x="${front_wheel_x - bogie_x}" z="${wheel_z - bogie_z}" reflect="${reflect}"/>
     <xacro:wheel prefix="${side}_middle" parent="${side}_bogie_link"
                  x="${middle_wheel_x - bogie_x}" z="${wheel_z - bogie_z}" reflect="${reflect}"/>
-    <xacro:wheel prefix="${side}_rear"   parent="${side}_bogie_link"
-                 x="${rear_wheel_x - bogie_x}" z="${wheel_z - bogie_z}" reflect="${reflect}"/>
+    <xacro:wheel prefix="${side}_rear"   parent="${side}_rocker_link"
+                 x="${rear_wheel_x - rocker_x}" z="${wheel_z - rocker_z}" reflect="${reflect}"/>
 
     <!-- Tie rod (cosmetic, aligned at nominal pose): rocker extension -> differential bar end -->
     <xacro:rod_segment x1="${rocker_x}" y1="${reflect*arm_y}" z1="${rocker_z + rocker_ext}"
@@ -319,7 +307,7 @@
   </link>
 
   <xacro:suspension_side side="left"  reflect="1"/>
-  <xacro:suspension_side side="right" reflect="-1" mimic_rocker="left_rocker_joint"/>
+  <xacro:suspension_side side="right" reflect="-1"/>
 
   <!-- Lidar -->
   <joint name="laser_joint" type="fixed">

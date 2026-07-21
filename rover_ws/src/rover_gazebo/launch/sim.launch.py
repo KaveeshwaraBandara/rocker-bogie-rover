@@ -1,12 +1,14 @@
 import os
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import (get_package_prefix,
+                                         get_package_share_directory)
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
+                            SetEnvironmentVariable)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (Command, LaunchConfiguration,
-                                  PathJoinSubstitution, PythonExpression)
+                                  PathJoinSubstitution)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -24,9 +26,14 @@ def generate_launch_description():
 
     robot_description = ParameterValue(
         Command(['xacro ', xacro_file, ' use_sim:=true',
-                 ' articulated:=', LaunchConfiguration('articulated'),
-                 ' bogies_free:=', LaunchConfiguration('bogies_free')]),
+                 ' locked_suspension:=',
+                 LaunchConfiguration('locked_suspension')]),
         value_type=str)
+
+    # let gz-sim find the RockerDifferential system plugin
+    plugin_path = SetEnvironmentVariable(
+        'GZ_SIM_SYSTEM_PLUGIN_PATH',
+        os.path.join(get_package_prefix('rover_gz_plugins'), 'lib'))
 
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -54,27 +61,11 @@ def generate_launch_description():
                         'mars_rough_world.sdf suspension test track, or '
                         'mars_demo_world.sdf full-capability demo)'),
         DeclareLaunchArgument(
-            'articulated',
-            # full passive suspension (rockers + mimic differential) needs the
-            # bullet-featherstone engine — default on exactly for the world
-            # built on that engine; bullet can't skid-steer rotate, so this
-            # mode is for teleop demos, not Nav2
-            default_value=PythonExpression(
-                ["'true' if 'rough' in '", LaunchConfiguration('world'),
-                 "' else 'false'"]),
-            description='Unlock the FULL passive suspension (needs the '
-                        'bullet-featherstone world mars_rough_world.sdf)'),
-        DeclareLaunchArgument(
-            'bogies_free',
-            # bogies are independent joints (no closed loop) -> articulate
-            # fine under DART with the calibrated skid-steer odometry, so
-            # autonomy worlds can show live suspension
-            default_value=PythonExpression(
-                ["'true' if 'demo' in '", LaunchConfiguration('world'),
-                 "' else 'false'"]),
-            description='Unlock only the bogie joints (DART-safe live '
-                        'suspension for mars_demo_world.sdf autonomy)'),
+            'locked_suspension', default_value='false',
+            description='Rigidify the rocker/bogie arms (debug only; the '
+                        'suspension is fully articulated by default)'),
 
+        plugin_path,
         gz_sim,
         gz_sim_headless,
 
